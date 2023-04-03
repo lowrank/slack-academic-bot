@@ -9,3 +9,9 @@ A slack bot for mathematician
 flyctl launch
 ```
 It will create the tmol file.
+4. Then just 
+```
+flyctl deploy
+```
+
+You have to set the environment variables (``SLACK_EVENTS_TOKEN``, ``SLACK_TOKEN``, ``OPENAI_API``) as secrets through flyctl.

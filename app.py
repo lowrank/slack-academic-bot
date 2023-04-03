@@ -1,14 +1,25 @@
 import os
 import logging
+
 from flask import Flask
 from slack import WebClient
 from slackeventsapi import SlackEventAdapter
 from arxivbot import ArxivBot
+
+
+from revChatGPT.V3 import Chatbot
 import urllib.request
 
 import re
 import time
+from threading import Thread
 
+
+ChatGPTConfig = {
+    "api_key": os.environ.get("OPENAI_API"),
+}
+
+chatbot = Chatbot(**ChatGPTConfig)
 
 # Initialize a Flask app to host the events adapter
 app = Flask(__name__)
@@ -31,7 +42,7 @@ def message(payload):
     # Get the event data from the payload
     event = payload.get("event", {})
 
-    user = event.get("bot_id")
+    user = event.get("user")
 
     if user is not None:
         return
@@ -88,7 +99,40 @@ def message(payload):
                     preprints.remove(preprint_hist[i])
                     preprint_hist.pop(0)
 
+
+@slack_events_adapter.on("app_mention")
+def handle_mentions(payload):
+    
+    event = payload.get('event', {})
+
+    prompt = re.sub('\\s<@[^, ]*|^<@[^, ]*', '', event['text'])
+    try:
+        response = chatbot.ask(prompt)
+        user = event.get("user")
+        send = f"<@{user}> {response}"
+
+    except Exception as e:
+        print(e)
+        send = "We're experiencing exceptionally high demand. Please, try again."
+
+    # Get the `ts` value of the original message
+    original_message_ts = event["ts"]
+
+    # Use the `app.event` method to send a reply to the message thread
+    slack_web_client.chat_postMessage(
+        channel=event["channel"],
+        text=send,
+    )
+
+
+def chatgpt_refresh():
+    while True:
+        time.sleep(60)
+
+
 if __name__ == "__main__":
+    thread = Thread(target=chatgpt_refresh)
+    thread.start()
     # Create the logging object
     logger = logging.getLogger()
 
