@@ -8,8 +8,7 @@ A slack bot for mathematician
 	```
 	flyctl launch
 	```
-	It will create the tmol file.
-   or just 
+   It will create the tmol file. Or just 
 	```
 	flyctl deploy
 	```
