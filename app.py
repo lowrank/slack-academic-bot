@@ -3,22 +3,30 @@ import re
 import tempfile
 import requests
 import arxiv
+from flask import Flask, request
 from slack_bolt import App
-
-# Environment variables:
-# SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
-app = App(
-    token=str(os.environ.get("SLACK_BOT_TOKEN")),
-    signing_secret=str(os.environ.get("SLACK_SIGNING_TOKEN"))
-)
+from slack_bolt.adapter.flask import SlackRequestHandler
+from slack_sdk.errors import SlackApiError
 
 # Regex to detect arXiv links (both abs and pdf)
 ARXIV_REGEX = r"https?://arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{5}(?:v\d+)?)(?:\.pdf)?"
 
+# Create the Slack app (Bolt)
+slack_app = App(
+    token=os.environ.get("SLACK_BOT_TOKEN"),
+    signing_secret=os.environ.get("SLACK_SIGNING_SECRET")
+)
+
+# Flask app
+flask_app = Flask(__name__)
+handler = SlackRequestHandler(slack_app)
+
+
 def fetch_arxiv_info(arxiv_id):
     """Fetch paper metadata from arXiv."""
+    client = arxiv.Client()
     search = arxiv.Search(id_list=[arxiv_id])
-    result = next(search.results())
+    result = next(client.results(search))
     return {
         "title": result.title,
         "authors": [a.name for a in result.authors],
@@ -26,20 +34,21 @@ def fetch_arxiv_info(arxiv_id):
         "pdf_url": result.pdf_url
     }
 
+
 def download_pdf(pdf_url):
     """Download PDF to a temporary file."""
-    response = requests.get(pdf_url)
+    response = requests.get(pdf_url, timeout=30)
     response.raise_for_status()
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp_file.write(response.content)
     tmp_file.close()
     return tmp_file.name
 
-@app.event("message")
+
+@slack_app.event("message")
 def handle_message_events(body, say, client):
     text = body.get("event", {}).get("text", "")
     match = re.search(ARXIV_REGEX, text)
-    
     if match:
         arxiv_id = match.group(1)
         try:
@@ -57,9 +66,19 @@ def handle_message_events(body, say, client):
                 file=pdf_path,
                 title=f"{info['title']}.pdf"
             )
-
+        except SlackApiError as e:
+            say(f"Error uploading file: {e.response['error']}")
+        except (requests.RequestException, arxiv.ArxivError) as e:
+            say(f"Error fetching arXiv paper: {e}")
         except Exception as e:
-            say(f"Error: {e}")
+            say(f"Unexpected error: {e}")
+
+
+# Slack events endpoint
+@flask_app.route("/slack/events", methods=["POST"])
+def slack_events():
+    return handler.handle(request)
+
 
 if __name__ == "__main__":
-    app.start(port=int(os.environ.get("PORT", 3000)))
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))
