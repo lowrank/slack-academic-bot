@@ -1,15 +1,8 @@
 # slack-academic-bot
 A slack bot for mathematician
 
-## How to deploy the bot to slack
-1. Register a [fly.io](https://fly.io/) account. Hobby account would be enough. 
-2. Install flyctl: https://fly.io/docs/hands-on/install-flyctl/
-3. Clone the bot and run 
-	```
-	flyctl launch
-	```
-   It will create the tmol file. Or just 
-	```
-	flyctl deploy
-	```
-   You have to set the environment variables (``SLACK_EVENTS_TOKEN``, ``SLACK_TOKEN``, ``OPENAI_API``) as secrets through flyctl.
+## Run the bot
+1. Install the dependencies with `pip install -r requirements.txt`
+2. Set the environment variable `SLACK_BOT_TOKEN` with your Slack bot token.
+3. Set the environment variable `SLACK_SIGNING_TOKEN` with your Slack signing secret.
+4. Run the bot with `python app.py`, either use grok tunnel or services like render.com to expose the bot to the internet.
