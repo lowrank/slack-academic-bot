@@ -14,7 +14,7 @@ ARXIV_REGEX = r"https?://arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{5}(?:v\d+)?)(?:\.pdf)
 # Create the Slack app (Bolt)
 slack_app = App(
     token=os.environ.get("SLACK_BOT_TOKEN"),
-    signing_secret=os.environ.get("SLACK_SIGNING_SECRET")
+    signing_secret=os.environ.get("SLACK_SIGNING_TOKEN")
 )
 
 # Flask app
