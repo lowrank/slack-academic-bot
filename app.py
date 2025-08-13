@@ -3,6 +3,7 @@ import re
 import tempfile
 import requests
 import arxiv
+import json
 from flask import Flask, request
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
@@ -14,7 +15,7 @@ ARXIV_REGEX = r"https?://arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{5}(?:v\d+)?)(?:\.pdf)
 # Create the Slack app (Bolt)
 slack_app = App(
     token=os.environ.get("SLACK_BOT_TOKEN"),
-    signing_secret=os.environ.get("SLACK_SIGNING_TOKEN")
+    signing_secret=os.environ.get("SLACK_SIGNING_SECRET")
 )
 
 # Flask app
@@ -43,6 +44,101 @@ def download_pdf(pdf_url):
     tmp_file.write(response.content)
     tmp_file.close()
     return tmp_file.name
+
+
+def chat_with_gemini(message_text):
+    """Send a message to Google Gemini and return the response."""
+    gemini_api_key = os.environ.get("GEMINI_API_KEY")
+    
+    if not gemini_api_key:
+        return "Error: Gemini API key not configured. Please set the GEMINI_API_KEY environment variable."
+    
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_api_key}"
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "contents": [{
+            "parts": [{
+                "text": f"You are a helpful assistant in a Slack channel for academics. Be concise, clear, and friendly. User message: {message_text}"
+            }]
+        }],
+        "generationConfig": {
+            "temperature": 0.7,
+            "topK": 1,
+            "topP": 1,
+            "maxOutputTokens": 32768,
+            "stopSequences": []
+        },
+        "safetySettings": [
+            {
+                "category": "HARM_CATEGORY_HARASSMENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_HATE_SPEECH",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            },
+            {
+                "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+            }
+        ]
+    }
+    
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if "candidates" in result and len(result["candidates"]) > 0:
+                return result["candidates"][0]["content"]["parts"][0]["text"].strip()
+            else:
+                return "Sorry, I couldn't generate a response."
+        else:
+            return f"Sorry, I encountered an error (status: {response.status_code}). Please try again later."
+            
+    except requests.exceptions.Timeout:
+        return "Sorry, the request timed out. Please try again."
+    except Exception as e:
+        return f"Sorry, I encountered an error: {str(e)}"
+
+
+@slack_app.event("app_mention")
+def handle_app_mention_events(body, say, client):
+    """Handle @mentions in public channels with Gemini."""
+    event = body.get("event", {})
+    text = event.get("text", "")
+    channel = event.get("channel")
+    
+    # Remove the bot mention from the text
+    # Slack mentions look like <@U1234567890>
+    clean_text = re.sub(r'<@[A-Z0-9]+>', '', text).strip()
+    
+    if clean_text:
+        try:
+            # Get response from Gemini
+            gemini_response = chat_with_gemini(clean_text)
+            
+            # Reply in thread if the original message was in a thread
+            thread_ts = event.get("thread_ts") or event.get("ts")
+            
+            # Post the response
+            say(
+                text=gemini_response,
+                thread_ts=thread_ts
+            )
+            
+        except Exception as e:
+            say(f"Sorry, I encountered an error: {str(e)}")
+    else:
+        say("Hi! How can I help you today?")
 
 
 @slack_app.event("message")
