@@ -62,7 +62,7 @@ def chat_with_gemini(message_text):
     payload = {
         "contents": [{
             "parts": [{
-                "text": f"You are a helpful assistant in a Slack channel for academics. Be concise, clear, and friendly. User message: {message_text}"
+                "text": f"You are a helpful assistant in a Slack channel for academics. Be informative, clear, accurate, and friendly. User message: {message_text}"
             }]
         }],
         "generationConfig": {
