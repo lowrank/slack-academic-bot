@@ -1,147 +1,65 @@
 import os
-import logging
-
-from flask import Flask
-from slack import WebClient
-from slackeventsapi import SlackEventAdapter
-from arxivbot import ArxivBot
-
-
-from revChatGPT.V3 import Chatbot
-import urllib.request
-
 import re
-import time
-from threading import Thread
+import tempfile
+import requests
+import arxiv
+from slack_bolt import App
 
+# Environment variables:
+# SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
+app = App(
+    token=str(os.environ.get("SLACK_BOT_TOKEN")),
+    signing_secret=str(os.environ.get("SLACK_SIGNING_TOKEN"))
+)
 
-ChatGPTConfig = {
-    "api_key": os.environ.get("OPENAI_API"),
-}
+# Regex to detect arXiv links (both abs and pdf)
+ARXIV_REGEX = r"https?://arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{5}(?:v\d+)?)(?:\.pdf)?"
 
-chatbot = Chatbot(**ChatGPTConfig)
+def fetch_arxiv_info(arxiv_id):
+    """Fetch paper metadata from arXiv."""
+    search = arxiv.Search(id_list=[arxiv_id])
+    result = next(search.results())
+    return {
+        "title": result.title,
+        "authors": [a.name for a in result.authors],
+        "summary": result.summary.strip(),
+        "pdf_url": result.pdf_url
+    }
 
-# Initialize a Flask app to host the events adapter
-app = Flask(__name__)
-# Create an events adapter and register it to an endpoint in the slack app for event injestion.
-slack_events_adapter = SlackEventAdapter(os.environ.get("SLACK_EVENTS_TOKEN"), "/slack/events", app)
+def download_pdf(pdf_url):
+    """Download PDF to a temporary file."""
+    response = requests.get(pdf_url)
+    response.raise_for_status()
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    tmp_file.write(response.content)
+    tmp_file.close()
+    return tmp_file.name
 
-
-# Initialize a Web API client
-slack_web_client = WebClient(token=os.environ.get("SLACK_TOKEN"))
-
-
-preprints = set()
-preprint_hist = []
-
-
-# When a 'message' event is detected by the events adapter, forward that payload
-# to this function.
-@slack_events_adapter.on("message")
-def message(payload):
-    # Get the event data from the payload
-    event = payload.get("event", {})
-
-    user = event.get("user")
-
-    if user is not None:
-        return
-
-    # Get the text from the event that came through
-    text = event.get("text")   
-
-    # Check and see if the activation phrase was in the text of the message.
-    # If so, execute the code to flip a coin.
-    if "https://arxiv.org/" in text.lower() and len(text) < 50:
-        print(text)
-        print("\n\n\n\n\n\n\n\n")
-        # Since the activation phrase was met, get the channel ID that the event
-        # was executed on
-
-        addr = text.lower().find("<https://arxiv.org/")+1
-        addr = text.lower()[addr: text.lower().find(">")]
-
-        channel = event.get("channel")
-
-        arxiv_bot = ArxivBot(channel)
-
-        # Get the onboarding message payload
-        message = arxiv_bot.get_message_payload(addr)
-
-        download_link = arxiv_bot.extract_pdf_link(addr)
-
-        unique_id = "".join(re.findall(r'\d+', download_link))
-        file_path = "./data/"+unique_id + ".pdf"
-
-        urllib.request.urlretrieve(download_link, file_path)
-
-        if unique_id in preprints:
-            return
-
-        else:
-            preprints.add(unique_id)
-            preprint_hist.append(unique_id)
-
-            with open(file_path, "rb"):
-                slack_web_client.files_upload(
-                    channels=channel,
-                    file=file_path,
-                    title=unique_id+".pdf",
-                    filetype='pdf'
-                )
-
-            # Post the onboarding message in Slack
-            slack_web_client.chat_postMessage(**message)
-
-            if len(preprint_hist) > 20:
-                to_delete = len(preprint_hist) - 20
-                for i in range(to_delete):
-                    preprints.remove(preprint_hist[i])
-                    preprint_hist.pop(0)
-
-
-@slack_events_adapter.on("app_mention")
-def handle_mentions(payload):
+@app.event("message")
+def handle_message_events(body, say, client):
+    text = body.get("event", {}).get("text", "")
+    match = re.search(ARXIV_REGEX, text)
     
-    event = payload.get('event', {})
+    if match:
+        arxiv_id = match.group(1)
+        try:
+            info = fetch_arxiv_info(arxiv_id)
+            pdf_path = download_pdf(info["pdf_url"])
 
-    prompt = re.sub('\\s<@[^, ]*|^<@[^, ]*', '', event['text'])
-    try:
-        response = chatbot.ask(prompt)
-        user = event.get("user")
-        send = f"<@{user}> {response}"
+            # Post paper details
+            say(f"*{info['title']}*\n"
+                f"Authors: {', '.join(info['authors'])}\n"
+                f"Abstract: {info['summary'][:1000]}...")
 
-    except Exception as e:
-        print(e)
-        send = "We're experiencing exceptionally high demand. Please, try again."
+            # Upload the PDF
+            client.files_upload_v2(
+                channel=body["event"]["channel"],
+                file=pdf_path,
+                title=f"{info['title']}.pdf"
+            )
 
-    # Get the `ts` value of the original message
-    original_message_ts = event["ts"]
-
-    # Use the `app.event` method to send a reply to the message thread
-    slack_web_client.chat_postMessage(
-        channel=event["channel"],
-        text=send,
-    )
-
-
-def chatgpt_refresh():
-    while True:
-        time.sleep(60)
-
+        except Exception as e:
+            say(f"Error: {e}")
 
 if __name__ == "__main__":
-    thread = Thread(target=chatgpt_refresh)
-    thread.start()
-    # Create the logging object
-    logger = logging.getLogger()
-
-    # Set the log level to DEBUG. This will increase verbosity of logging messages
-    logger.setLevel(logging.DEBUG)
-
-    # Add the StreamHandler as a logging handler
-    logger.addHandler(logging.StreamHandler())
-    # Run our app on our externally facing IP address on port 3000 instead of
-    # running it on localhost, which is traditional for development.
-    # app.run(host='127.0.0.1', port=3000)
-    app.run(port=3000)
+    app.start(port=int(os.environ.get("PORT", 3000)))
