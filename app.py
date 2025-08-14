@@ -8,6 +8,7 @@ from flask import Flask, request
 from slack_bolt import App
 from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk.errors import SlackApiError
+from markdown_to_mrkdwn import SlackMarkdownConverter
 
 # Regex to detect arXiv links (both abs and pdf)
 ARXIV_REGEX = r"https?://arxiv\.org/(?:abs|pdf)/(\d{4}\.\d{5}(?:v\d+)?)(?:\.pdf)?"
@@ -22,6 +23,7 @@ slack_app = App(
 flask_app = Flask(__name__)
 handler = SlackRequestHandler(slack_app)
 
+converter = SlackMarkdownConverter()
 
 def fetch_arxiv_info(arxiv_id):
     """Fetch paper metadata from arXiv."""
@@ -131,7 +133,7 @@ def handle_app_mention_events(body, say, client):
             
             # Post the response
             say(
-                text=gemini_response,
+                text=converter.convert(gemini_response),
                 thread_ts=thread_ts
             )
             
