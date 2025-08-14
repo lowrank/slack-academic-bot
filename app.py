@@ -53,7 +53,7 @@ def chat_with_gemini(message_text):
     if not gemini_api_key:
         return "Error: Gemini API key not configured. Please set the GEMINI_API_KEY environment variable."
     
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={gemini_api_key}"
     
     headers = {
         "Content-Type": "application/json"
@@ -62,7 +62,7 @@ def chat_with_gemini(message_text):
     payload = {
         "contents": [{
             "parts": [{
-                "text": f"You are a helpful assistant in a Slack channel for academics. Be informative, clear, accurate, and friendly. User message: {message_text}"
+                "text": f"You are a helpful assistant in a Slack channel for academics. Be clear, accurate, and friendly. Please reply with Slack mrkdwn format. User message: {message_text}"
             }]
         }],
         "generationConfig": {
